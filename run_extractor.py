@@ -1,4 +1,4 @@
-"""Curve Online extractor implementation using the framework."""
+"""Hallforcornwall extractor implementation using the framework."""
 import json
 import random
 import re
@@ -27,7 +27,8 @@ from utils.scraping_helpers import (
     standardize_category,
 )
 
-from .curve_online_config import (  # COOKIE_BTN_XPATH,
+from .hallforcornwall_config import (  # COOKIE_BTN_XPATH,
+    ADDRESS_URL,
     DEFAULT_CURRENCY,
     DEFAULT_THEATRE_DETAILS,
     PAGES,
@@ -37,12 +38,12 @@ from .curve_online_config import (  # COOKIE_BTN_XPATH,
 logger = setup_logger(__name__, log_to_file=False)
 
 
-class CurveOnlineExtractor(BaseExtractor):
-    """Extractor for Curve Online website."""
+class HallforcornwallExtractor(BaseExtractor):
+    """Extractor for hallforcornwall website."""
 
     def __init__(self, local_test=False, show_count=2, **kwargs):
         super().__init__(
-            site_id="curve_online",
+            site_id="hallforcornwall",
             log_to_file=False,
             log_to_terminal=True,
             local_test=local_test,
@@ -91,7 +92,7 @@ class CurveOnlineExtractor(BaseExtractor):
             return None
 
     def get_show_links(self, sb):
-        elements = sb.find_elements(By.CSS_SELECTOR, SELECTORS["title"])
+        elements = sb.find_elements(By.CSS_SELECTOR, SELECTORS["shows_link"])
         return [e.get_attribute("href") for e in elements if e.get_attribute("href")]
 
     def _get_show_title(self, sb) -> str | None:
@@ -107,7 +108,13 @@ class CurveOnlineExtractor(BaseExtractor):
         """Extract show header dates."""
         try:
             # Mon 13 - Sat 18 Jul 2026
-            terminal_date = sb.get_text(SELECTORS["terminal_date"])
+            terminal_date_el = sb.get_text(SELECTORS["terminal_date"])
+
+            if "," in terminal_date_el:
+                terminal_date = terminal_date_el.split(",")[0]
+            else:
+                terminal_date = terminal_date_el
+
             return terminal_date.strip() if terminal_date else None
         except Exception as e:
             self.custom_logger.debug(
@@ -144,7 +151,7 @@ class CurveOnlineExtractor(BaseExtractor):
             return DEFAULT_THEATRE_DETAILS
 
     def _extract_performances(self, sb) -> list[dict]:
-        """Parses performance instances directly from Curve's single or continuous date markers."""
+        """Parses performance instances directly from hallforcornwall's single or continuous date markers."""
 
         performances = []
         seen_urls = set()
@@ -153,8 +160,8 @@ class CurveOnlineExtractor(BaseExtractor):
         try:
             sb.wait_for_element_present(SELECTORS["first_book_btn"], timeout=10) 
 
-            first_book_btn = sb.find_elements(SELECTORS["first_book_btn"])
-            sb.execute_script("arguments[0].click();", first_book_btn)
+            first_book_btn = sb.find_element(SELECTORS["first_book_btn"])
+            first_book_btn.click()
             human_delay(1.0, 2.0)
             self.custom_logger.info(" First Book button clicked successfully.")
         except Exception as e:
@@ -168,10 +175,12 @@ class CurveOnlineExtractor(BaseExtractor):
             for block in date_blocks:
                 try:
                     booking_url = block.find_element(
-                        By.TAG_NAME, SELECTORS["booking_url"]
+                        By.CSS_SELECTOR, SELECTORS["booking_url"]
                     ).get_attribute("href")
+                    
                     # Deduplicate based on unique performance booking URL
                     if booking_url in seen_urls:
+                        self.custom_logger.info(f" performance booking_url duplicated")
                         continue
 
                     raw_date_text = (
@@ -179,19 +188,24 @@ class CurveOnlineExtractor(BaseExtractor):
                         .get_attribute("textContent")
                         .strip()
                     )
+                    
                     raw_time_text = (
                         block.find_element(By.CSS_SELECTOR, SELECTORS["raw_time_text"])
                         .get_attribute("textContent")
                         .strip()
                     )
+
                     if not raw_date_text or not raw_time_text:
+                        self.custom_logger.info(f" performance raw_date_text, raw_time_text not found ")
                         continue
 
                     year = str(datetime.now().year)
                     date_string = f"{raw_date_text} {year} {raw_time_text}"
+                    self.custom_logger.info(f" performance date_string : {date_string}")
 
                     date_ymd = self._parse_date(date_string)
-                    time_hm = convert_to_24hr(raw_time_text)
+                    time_hm = parser.parse(raw_time_text).strftime("%H:%M")
+                    #time_hm = convert_to_24hr(raw_time_text)
 
                     performances.append(
                         {
@@ -215,7 +229,7 @@ class CurveOnlineExtractor(BaseExtractor):
     def extract_seats(self, sb) -> tuple:
         """Extracts seats and pricing from the currently open SVG modal."""
 
-        perf_capacity = None
+        perf_capacity = 0
         currency = None
         all_seats = {}
 
@@ -313,7 +327,7 @@ class CurveOnlineExtractor(BaseExtractor):
                                 # break and every subsequent area returns wrong data.
                                 _cur_count = len(
                                     sb.find_elements(
-                                        By.CSS_SELECTOR, SELECTORS["all_seats"]
+                                        By.CSS_SELECTOR, SELECTORS["seats"]
                                     )
                                 )
                                 if _cur_count > 0 and _cur_count != prev_seat_count:
@@ -341,20 +355,22 @@ class CurveOnlineExtractor(BaseExtractor):
                         for seat in seats:
                             try:
                                 tooltip = (seat.get_attribute("tooltip") or seat.get_attribute("title") or "")
-
+                                
                                 if currency is None and tooltip:
                                     currency = get_currency_from_price(tooltip)
 
-                                if not tooltip:
+                                if not tooltip or "Unavailable" in tooltip:
                                     continue
 
-                                match = re.search(r"([A-Z]+\d+)\s*-\s*£?([\d,.]+)", tooltip)
-                                if not match:
+                                # Use explicit field lookups to handle the multi-line layout safely
+                                seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
+                                price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
+
+                                if not seat_match or not price_match:
                                     continue
 
-                                seat_id = match.group(1)
-                                ticket_price = float(match.group(2).replace(",", ""))
-
+                                seat_id = seat_match.group(1)
+                                ticket_price = float(price_match.group(1).replace(",", ""))
                                 seat_id_ = f"{area} {seat_id}"
 
                                 all_seats[seat_id_] = {
@@ -397,11 +413,9 @@ class CurveOnlineExtractor(BaseExtractor):
     def extract_seat_metrics(self, sb, performances):  # Fixed: Indented inside class
         """Extracts seats and pricing from internal ticket frame configurations."""
 
-        venue_details = {}
-        venue_extracted = False
         seat_pricing = {}
 
-        capacity = None
+        capacity = 0
         currency = None
         encountered_no_seatmap = False
 
@@ -417,7 +431,7 @@ class CurveOnlineExtractor(BaseExtractor):
             # Confirm if sold out / Performance has no digital booking URL (likely telephone booking)."
             if not self.safe_get(sb, perf["booking_url"]):
                 self.custom_logger.info(
-                    f"Performance {key} is sold out or seatmap is unavailable."
+                    f"Performance {key} is sold out."
                 )
                 seat_pricing[key] = []
                 continue
@@ -436,7 +450,7 @@ class CurveOnlineExtractor(BaseExtractor):
                         f" Seats: {len(seat_list)} | Capacity: {capacity} | Currency: {currency}"
                     )
 
-                else:
+                except Exception:
                     seat_pricing[key] = []
                     encountered_no_seatmap = True
                     self.custom_logger.info(
@@ -465,7 +479,8 @@ class CurveOnlineExtractor(BaseExtractor):
             seat_pricing = {}
 
         self.custom_logger.info(" Seat extraction flow processed")
-        return seat_pricing, currency, capacity, venue_details
+        return seat_pricing, currency, capacity
+
 
     def _scrape_one_show(self, sb, show_url: str, category: str) -> dict | None:
         """Scrape a single show page end-to-end.
@@ -487,9 +502,16 @@ class CurveOnlineExtractor(BaseExtractor):
         open_date, close_date = None, None
         terminal_date = self._get_terminal_dates(sb)
         if terminal_date:
-            booking_dates = parse_booking_dates(terminal_date)
-            open_date = booking_dates.get("start_date")
-            close_date = booking_dates.get("end_date")
+            match = re.match(r"^(\d+)\s*-\s*(\d+)\s+([A-Za-z]+)\s+(\d{4})$", terminal_date.strip())
+            if match:
+                day_start, day_end, month, year = match.groups()
+                terminal_date = f"{day_start} {month} {year} - {day_end} {month} {year}"
+            try:
+                booking_dates = parse_booking_dates(terminal_date)
+                open_date = booking_dates.get("start_date")
+                close_date = booking_dates.get("end_date")
+            except Exception as e:
+                self.custom_logger.warning(f"Shared parse_booking_dates utility failed: {e}")
 
         # FIX 4: Read variables safely out of the class instance property
         venue_name = self.venue_details.get("venue")
@@ -534,7 +556,7 @@ class CurveOnlineExtractor(BaseExtractor):
             )
             open_date = sorted_dates[0]
 
-        seat_pricing, currency, capacity, venue_details = self.extract_seat_metrics(
+        seat_pricing, currency, capacity = self.extract_seat_metrics(
             sb, performances
         )
 
@@ -631,11 +653,11 @@ class CurveOnlineExtractor(BaseExtractor):
             locale="en-US",
             chromium_arg="--enable-features=TranslateUI",
         ) as sb:
-            self.custom_logger.info("Starting extraction from Curve Online")
+            self.custom_logger.info("Starting extraction from hallforcornwall")
 
             # Get address from the visiting us page
-            address_link = address_url
-            if not self.safe_get(sb, address_url):
+            address_url = ADDRESS_URL
+            if self.safe_get(sb, address_url):
                 sb.maximize_window()
                 self.accept_cookies(sb)
                 self.venue_details = self._get_theatre_address(sb)
@@ -660,7 +682,7 @@ class CurveOnlineExtractor(BaseExtractor):
                     )
                     show_links = show_links[: self.show_count]
 
-                self._scrape_shows(sb, show_links, venue_details, category)
+                self._scrape_shows(sb, show_links, category)
 
         return json.dumps(self.all_data, default=str).encode("utf-8")
 
@@ -672,8 +694,8 @@ class CurveOnlineExtractor(BaseExtractor):
 
 
 def main():
-    """Example usage of the Curve Online extractor."""
-    extractor = CurveOnlineExtractor(save_csv_locally=False, csv_incremental_mode=False)
+    """Example usage of the hallforcornwall extractor."""
+    extractor = HallforcornwallExtractor(save_csv_locally=False, csv_incremental_mode=False)
     result = extractor.run()
     logger.info(f"Extraction result: {result}")
     if result.get("status") != "success":
