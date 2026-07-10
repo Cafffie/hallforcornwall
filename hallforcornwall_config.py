@@ -1,4 +1,4 @@
-"""Configuration for Curve Online Theatre scraper."""
+"""Configuration for Hallforcornwall Theatre scraper."""
 
 SITE_ID = "hall_for_cornwall"
 BASE_URL = "https://www.hallforcornwall.co.uk/"
@@ -14,7 +14,7 @@ COOKIE_BTN_XPATH = (
     "//button[@id='CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll']"
 )
 
-address_url = "https://www.hallforcornwall.co.uk/visiting-us/"
+ADDRESS_URL = "https://www.hallforcornwall.co.uk/visiting-us/"
 
 DEFAULT_THEATRE_DETAILS = {
     "venue": "Hall for Cornwall",
@@ -29,8 +29,8 @@ SELECTORS = {
     #"address_header_xpath": "//p[contains(@class, 'h4') and contains(text(), 'Address')]",
     #"address_paragraph_xpath": "/following-sibling::p",
     #"shows_cards": "article.listing__item",
-    #"shows_link": "article.grid__cell a",
-    "title": "li.WhatsonItem h3 a",
+    "shows_link": ".WhatsonItem .WhatsOnDateBnt a:first-of-type",
+    "title": ".whatson-event-detailsHeading-title h1",
     "terminal_date": ".EventDetailHeading_row span.EventpostDate",
     #"venue_url": "article.listing__item a",
     "first_book_btn": ".BannerBookBtn",
@@ -43,9 +43,3 @@ SELECTORS = {
     "seats": "div.SeatingArea img[class*='Seat'], rect.seat",
     "available_seats": "img[class*='Seat']",
 }
-
-# 1. Click the dropdown itself to "open" it / focus it
-sb.click("#ctl00_ContentPlaceHolder_AvailableAreas")
-
-# 2. Select your option
-sb.select_option_by_text("#ctl00_ContentPlaceHolder_AvailableAreas", "Balcony")
