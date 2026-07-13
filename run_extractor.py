@@ -161,7 +161,8 @@ class HallforcornwallExtractor(BaseExtractor):
             sb.wait_for_element_present(SELECTORS["first_book_btn"], timeout=10) 
 
             first_book_btn = sb.find_element(SELECTORS["first_book_btn"])
-            first_book_btn.click()
+            sb.execute_script("arguments[0].click();", first_book_btn)
+            #first_book_btn.click()
             human_delay(1.0, 2.0)
             self.custom_logger.info(" First Book button clicked successfully.")
         except Exception as e:
@@ -250,7 +251,7 @@ class HallforcornwallExtractor(BaseExtractor):
 
             if not has_dropdown:
                 try:
-                    iframes = sb.find_elements("iframe")
+                    iframes = sb.find_elements(SELECTORS["iframe"])
                     for iframe in iframes:
                         try:
                             sb.switch_to_frame(iframe)
@@ -259,10 +260,50 @@ class HallforcornwallExtractor(BaseExtractor):
                             human_delay(1, 2)
                             sb.execute_script("window.scrollTo(0, 0);")
                             human_delay(1, 2)
-                            sb.wait_for_element_present(dropdown_selector, timeout=25)
-                            has_dropdown = True
-                            self.custom_logger.info("Dropdown found in iframe")
-                            break
+
+                            # -----------------------------
+                            # CASE 1: iframe has dropdown
+                            # -----------------------------
+                            if sb.is_element_present(dropdown_selector):
+                                has_dropdown = True
+                                self.custom_logger.info("Dropdown found in iframe")
+                                break
+
+                            # -----------------------------
+                            # CASE 2: iframe has seat map
+                            # (single seating layout)
+                            # -----------------------------
+                            self.custom_logger.info(
+                                "No dropdown found. Checking for seat map..."
+                            )
+
+                            for _ in range(20):
+                                seats = sb.find_elements(
+                                    By.CSS_SELECTOR,
+                                    SELECTORS["seats"],
+                                )
+
+                                if seats:
+                                    self.custom_logger.info(
+                                        "Single seat map found in iframe "
+                                        f"({len(seats)} seats)"
+                                    )
+                                    break
+
+                                human_delay(1, 1.5)
+
+                            if seats:
+                                # IMPORTANT:
+                                # Stay inside this iframe.
+                                # The seat map lives here.
+                                self.custom_logger.info(
+                                    "Using single-level seat map in iframe"
+                                )
+                                break
+
+                            # Wrong iframe
+                            sb.switch_to_default_content()
+
                         except Exception:
                             sb.switch_to_default_content()
                 except Exception as iframe_err:
@@ -344,7 +385,9 @@ class HallforcornwallExtractor(BaseExtractor):
                     self.custom_logger.info("Scraping seats for: %s", area)
 
                     try:
-                        seats = sb.find_elements(By.CSS_SELECTOR, SELECTORS["seats"])
+                        #sb.wait_for_element_present(SELECTORS["seats"], timeout=12)
+                        seats = sb.find_elements( SELECTORS["seats"])
+                        self.custom_logger.info(f" Found {len(seats)} unique seats. ")
 
                         area_capacity = len(seats)
                         prev_seat_count = area_capacity  # update for next area
@@ -362,20 +405,36 @@ class HallforcornwallExtractor(BaseExtractor):
                                 if not tooltip or "Unavailable" in tooltip:
                                     continue
 
-                                # Use explicit field lookups to handle the multi-line layout safely
-                                seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
-                                price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
+                                seat_id = None
+                                ticket_price = None
 
-                                if not seat_match or not price_match:
+                                # Multi-tier Text Format Parsing ("Seat: A1 Price: £15.00")
+                                if "Seat:" in tooltip:
+                                    seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
+                                    price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
+                                    if seat_match and price_match:
+                                        seat_id = seat_match.group(1)
+                                        ticket_price = float(price_match.group(1).replace(",", ""))
+
+                                # Single-tier Clean/Legacy Text Format Parsing ("A1 - £15.00")
+                                elif " - " in tooltip:
+                                    parts = tooltip.split(" - ")
+                                    if len(parts) == 2:
+                                        seat_id = parts[0].strip()
+                                        price_digits = re.search(r"([\d,.]+)", parts[1])
+                                        if price_digits:
+                                            ticket_price = float(price_digits.group(1).replace(",", ""))
+
+                                # Safeguard: skip processing if data didn't cleanly match either pattern
+                                if not seat_id or ticket_price is None:
                                     continue
 
-                                seat_id = seat_match.group(1)
-                                ticket_price = float(price_match.group(1).replace(",", ""))
-                                seat_id_ = f"{area} {seat_id}"
 
+                                seat_id_ = f"{area} {seat_id}"
                                 all_seats[seat_id_] = {
                                     "seat": seat_id_, 
-                                    "ticket_price": ticket_price}
+                                    "ticket_price": ticket_price
+                                }
 
                             except Exception as seat_error:
                                 self.custom_logger.warning("Failed to parse seat: %s", seat_error)
