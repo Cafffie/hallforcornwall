@@ -27,7 +27,8 @@ from utils.scraping_helpers import (
     standardize_category,
 )
 
-from .hallforcornwall_config import (  # COOKIE_BTN_XPATH,
+from .hallforcornwall_config import (
+    VENUE_MAP,
     ADDRESS_URL,
     DEFAULT_CURRENCY,
     DEFAULT_THEATRE_DETAILS,
@@ -150,6 +151,31 @@ class HallforcornwallExtractor(BaseExtractor):
             )
             return DEFAULT_THEATRE_DETAILS
 
+
+    def _get_event_venue(self, sb) -> dict | None:
+        """Extract an event-specific venue from the current show page."""
+
+        try:
+            description = sb.get_text(
+                SELECTORS["event_description"]
+            ).strip().lower()
+
+            for venue_name, venue_details in VENUE_MAP.items():
+                if venue_name.lower() in description:
+                    self.custom_logger.info(
+                        "Event-specific venue found: %s",
+                        venue_details["venue"],
+                    )
+                    return venue_details
+
+        except Exception as e:
+            self.custom_logger.warning(
+                "Event-specific venue extraction failed: %s",
+                e,
+            )
+
+        return None
+
     def _extract_performances(self, sb) -> list[dict]:
         """Parses performance instances directly from hallforcornwall's single or continuous date markers."""
 
@@ -161,7 +187,8 @@ class HallforcornwallExtractor(BaseExtractor):
             sb.wait_for_element_present(SELECTORS["first_book_btn"], timeout=10) 
 
             first_book_btn = sb.find_element(SELECTORS["first_book_btn"])
-            first_book_btn.click()
+            sb.execute_script("arguments[0].click();", first_book_btn)
+            #first_book_btn.click()
             human_delay(1.0, 2.0)
             self.custom_logger.info(" First Book button clicked successfully.")
         except Exception as e:
@@ -227,7 +254,8 @@ class HallforcornwallExtractor(BaseExtractor):
         return performances
 
     def extract_seats(self, sb) -> tuple:
-        """Extracts seats and pricing from the currently open Spektrix frame."""
+        """Extracts seats and pricing from the currently open SVG modal."""
+
         perf_capacity = 0
         currency = None
         all_seats = {}
@@ -237,39 +265,76 @@ class HallforcornwallExtractor(BaseExtractor):
             human_delay(2, 3)
 
             dropdown_selector = SELECTORS["seating_dropdown"]
-            iframe_found = False
-            
-            # Step 1: Locate the active Spektrix iframe and switch into it
-            iframes = sb.find_elements(By.TAG_NAME, "iframe")
-            iframes = sb.find_elements("iframe")
-            for iframe in iframes:
-                try:
-                    sb.switch_to_frame(iframe)
-                    human_delay(2, 3)
-                    sb.execute_script("window.scrollTo(0, 300);")
-                    human_delay(1, 2)
-                    sb.execute_script("window.scrollTo(0, 0);")
-                    human_delay(1, 2)
-                    sb.wait_for_element_present(dropdown_selector, timeout=25)
-                    has_dropdown = True
-                    self.custom_logger.info("Dropdown found in iframe")
-                    break
-                except Exception:
-                    sb.switch_to_default_content()
-
-            # Step 2: Look for an Area Dropdown inside our active iframe context
             has_dropdown = False
             areas = []
-            
-            if iframe_found:
-                try:
-                    sb.wait_for_element_present(dropdown_selector, timeout=4)
-                    has_dropdown = True
-                    self.custom_logger.info("Dropdown menu detected inside iframe")
-                except Exception:
-                    self.custom_logger.info("No dropdown detected — handling as single-level map layout")
 
-            # Step 3: Map out execution areas based on structure layout
+            try:
+                sb.wait_for_element_present(dropdown_selector, timeout=15)
+                has_dropdown = True
+                self.custom_logger.info("Dropdown found on main page")
+            except Exception:
+                pass
+
+            if not has_dropdown:
+                try:
+                    iframes = sb.find_elements(SELECTORS["iframe"])
+                    for iframe in iframes:
+                        try:
+                            sb.switch_to_frame(iframe)
+                            human_delay(2, 3)
+                            sb.execute_script("window.scrollTo(0, 300);")
+                            human_delay(1, 2)
+                            sb.execute_script("window.scrollTo(0, 0);")
+                            human_delay(1, 2)
+
+                            # -----------------------------
+                            # CASE 1: iframe has dropdown
+                            # -----------------------------
+                            if sb.is_element_present(dropdown_selector):
+                                has_dropdown = True
+                                self.custom_logger.info("Dropdown found in iframe")
+                                break
+
+                            # -----------------------------
+                            # CASE 2: iframe has seat map
+                            # (single seating layout)
+                            # -----------------------------
+                            self.custom_logger.info(
+                                "No dropdown found. Checking for seat map..."
+                            )
+
+                            for _ in range(20):
+                                seats = sb.find_elements(
+                                    By.CSS_SELECTOR,
+                                    SELECTORS["seats"],
+                                )
+
+                                if seats:
+                                    self.custom_logger.info(
+                                        "Single seat map found in iframe "
+                                        f"({len(seats)} seats)"
+                                    )
+                                    break
+
+                                human_delay(1, 1.5)
+
+                            if seats:
+                                # IMPORTANT:
+                                # Stay inside this iframe.
+                                # The seat map lives here.
+                                self.custom_logger.info(
+                                    "Using single-level seat map in iframe"
+                                )
+                                break
+
+                            # Wrong iframe
+                            sb.switch_to_default_content()
+
+                        except Exception:
+                            sb.switch_to_default_content()
+                except Exception as iframe_err:
+                    self.custom_logger.warning("iframe search failed: %s", iframe_err)
+
             if has_dropdown:
                 raw_options = sb.execute_script(
                     """
@@ -286,109 +351,135 @@ class HallforcornwallExtractor(BaseExtractor):
                 areas = [o for o in raw_options if o and o != "Cornwall Playhouse"]
                 self.custom_logger.info("Found dropdown with areas: %s", areas)
             else:
-                areas = ["Main Hall"]
+                self.custom_logger.info("No dropdown — using single level seating")
+                areas = ["Stalls"]
 
-            prev_seat_count = -1
+            prev_seat_count = -1  # sentinel: no area scraped yet
 
-            # Step 4: Parse the targeted areas
             for area in areas:
                 try:
+                    self.custom_logger.info("Selecting area: %s", area)
+
                     if has_dropdown:
-                        self.custom_logger.info("Selecting area: %s", area)
-                        result = sb.execute_script(
-                            """
-                            var select = document.querySelector(arguments[0]);
-                            if (!select) return false;
-                            var areaName = arguments[1];
-                            for (var i = 0; i < select.options.length; i++) {
-                                if (select.options[i].text.trim() === areaName) {
-                                    select.value = select.options[i].value;
-                                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                                    return true;
-                                }
-                            }
-                            return false;
-                            """,
-                            dropdown_selector,
-                            area,
-                        )
-                        if not result:
-                            self.custom_logger.warning("Could not find area %s in dropdown", area)
-                            continue
-                        
-                        sb.wait_for_ready_state_complete()
-                        for _ in range(5):
-                            human_delay(1, 2)
-                            _cur_count = len(sb.find_elements(By.CSS_SELECTOR, SELECTORS["seats"]))
-                            if _cur_count > 0 and _cur_count != prev_seat_count:
-                                break
-                    else:
-                        # Explicit wait buffer for standalone single maps to settle
-                        self.custom_logger.info("Waiting for single-level layout container to populate...")
-                        sb.wait_for_ready_state_complete()
-                        human_delay(2, 3)
-
-                    self.custom_logger.info("Scraping seats for zone: %s", area)
-                    
-                    # Dynamic Selector Fallback Strategy
-                    seats = sb.find_elements(By.CSS_SELECTOR, SELECTORS["seats"])
-                    self.custom_logger.info(f" Found {len(seats)} unique seats. ")
-
-                    if not seats:
-                        self.custom_logger.info("Primary selector empty, trying legacy img map fallback elements")
-                        seats = sb.find_elements(By.CSS_SELECTOR, ".SeatingArea img.SeatSelectable, .SeatingArea img.Seat")
-
-                    area_capacity = len(seats)
-                    prev_seat_count = area_capacity
-                    perf_capacity += area_capacity
-
-                    self.custom_logger.info("Zone: %s | Seats Found: %s", area, area_capacity)
-
-                    for seat in seats:
                         try:
-                            tooltip = seat.get_attribute("tooltip") or seat.get_attribute("title") or ""
-                            if not tooltip or "Unavailable" in tooltip:
+                            result = sb.execute_script(
+                                """
+                                var select = document.querySelector(arguments[0]);
+                                if (!select) return false;
+                                var areaName = arguments[1];
+                                for (var i = 0; i < select.options.length; i++) {
+                                    if (select.options[i].text.trim() === areaName) {
+                                        select.value = select.options[i].value;
+                                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                                        return true;
+                                    }
+                                }
+                                return false;
+                                """,
+                                dropdown_selector,
+                                area,
+                            )
+                            if not result:
+                                self.custom_logger.warning(
+                                    "Could not find area %s in dropdown", area
+                                )
                                 continue
-
-                            if currency is None and tooltip:
-                                currency = get_currency_from_price(tooltip)
-
-                            seat_id = None
-                            ticket_price = None
-
-                            # Multi-tier Text Format Parsing ("Seat: A1 Price: £15.00")
-                            if "Seat:" in tooltip:
-                                seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
-                                price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
-                                if seat_match and price_match:
-                                    seat_id = seat_match.group(1)
-                                    ticket_price = float(price_match.group(1).replace(",", ""))
-
-                            # Single-tier Clean/Legacy Text Format Parsing ("A1 - £15.00")
-                            elif " - " in tooltip:
-                                parts = tooltip.split(" - ")
-                                if len(parts) == 2:
-                                    seat_id = parts[0].strip()
-                                    price_digits = re.search(r"([\d,.]+)", parts[1])
-                                    if price_digits:
-                                        ticket_price = float(price_digits.group(1).replace(",", ""))
-
-                            # Safeguard: skip processing if data didn't cleanly match either pattern
-                            if not seat_id or ticket_price is None:
-                                continue
-
-                            seat_id_ = f"{area} {seat_id}"
-                            all_seats[seat_id_] = {
-                                "seat": seat_id_, 
-                                "ticket_price": ticket_price
-                            }
-                        except Exception:
+                            sb.wait_for_ready_state_complete()
+                            for _ in range(15):
+                                human_delay(2, 3)
+                                # Break only when the seat count changes from the
+                                # previous area — proving the iframe re-rendered.
+                                # Without this check the stale previous-area chart
+                                # (still visible during re-render) triggers a false
+                                # break and every subsequent area returns wrong data.
+                                _cur_count = len(
+                                    sb.find_elements(
+                                        By.CSS_SELECTOR, SELECTORS["seats"]
+                                    )
+                                )
+                                if _cur_count > 0 and _cur_count != prev_seat_count:
+                                    break
+                                sb.execute_script("window.scrollTo(0, 300);")
+                                human_delay(1, 2)
+                                sb.execute_script("window.scrollTo(0, 0);")
+                        except Exception as dropdown_error:
+                            self.custom_logger.warning(
+                                "Failed to select area %s: %s", area, dropdown_error
+                            )
                             continue
+
+                    self.custom_logger.info("Scraping seats for: %s", area)
+
+                    try:
+                        #sb.wait_for_element_present(SELECTORS["seats"], timeout=12)
+                        seats = sb.find_elements( SELECTORS["seats"])
+                        self.custom_logger.info(f" Found {len(seats)} unique seats. ")
+
+                        area_capacity = len(seats)
+                        prev_seat_count = area_capacity  # update for next area
+                        perf_capacity += area_capacity
+
+                        self.custom_logger.info("Area: %s | Total Seats: %s", area, area_capacity)
+
+                        for seat in seats:
+                            try:
+                                tooltip = (seat.get_attribute("tooltip") or seat.get_attribute("title") or "")
+                                
+                                if currency is None and tooltip:
+                                    currency = get_currency_from_price(tooltip)
+
+                                if not tooltip or "Unavailable" in tooltip:
+                                    continue
+
+                                seat_id = None
+                                ticket_price = None
+
+                                # Multi-tier Text Format Parsing ("Seat: A1 Price: £15.00")
+                                if "Seat:" in tooltip:
+                                    seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
+                                    price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
+                                    if seat_match and price_match:
+                                        seat_id = seat_match.group(1)
+                                        ticket_price = float(price_match.group(1).replace(",", ""))
+
+                                # Single-tier Clean/Legacy Text Format Parsing ("A1 - £15.00")
+                                elif " - " in tooltip:
+                                    parts = tooltip.split(" - ")
+                                    if len(parts) == 2:
+                                        seat_id = parts[0].strip()
+                                        price_digits = re.search(r"([\d,.]+)", parts[1])
+                                        if price_digits:
+                                            ticket_price = float(price_digits.group(1).replace(",", ""))
+
+                                # Safeguard: skip processing if data didn't cleanly match either pattern
+                                if not seat_id or ticket_price is None:
+                                    continue
+
+
+                                seat_id_ = f"{area} {seat_id}"
+                                all_seats[seat_id_] = {
+                                    "seat": seat_id_, 
+                                    "ticket_price": ticket_price
+                                }
+
+                            except Exception as seat_error:
+                                self.custom_logger.warning("Failed to parse seat: %s", seat_error)
+                                continue
+
+                    except Exception as seat_extraction_error:
+                        self.custom_logger.error(
+                            "Seat extraction error for area %s: %s",
+                            area,
+                            seat_extraction_error,
+                        )
+                        continue
 
                 except Exception as area_error:
-                    self.custom_logger.warning("Failed to process area %s: %s", area, area_error)
+                    self.custom_logger.warning(
+                        "Failed to process area %s: %s", area, area_error
+                    )
                     continue
-
+        
         except Exception as e:
             self.custom_logger.error("Seat map scraping failed: %s", e)
         finally:
@@ -396,7 +487,7 @@ class HallforcornwallExtractor(BaseExtractor):
                 sb.switch_to_default_content()
             except Exception:
                 pass
-
+  
         seat_list = list(all_seats.values())
         self.custom_logger.info(
             f" Total capacity: {perf_capacity} seats ({len(seat_list)} priced)"
@@ -507,11 +598,20 @@ class HallforcornwallExtractor(BaseExtractor):
             except Exception as e:
                 self.custom_logger.warning(f"Shared parse_booking_dates utility failed: {e}")
 
-        # FIX 4: Read variables safely out of the class instance property
-        venue_name = self.venue_details.get("venue")
-        address = self.venue_details.get("address")
-        city = self.venue_details.get("city")
-        country = normalize_country(self.venue_details.get("country"))
+
+        event_venue = self._get_event_venue(sb)
+
+        if event_venue:
+            venue_name = event_venue.get("venue")
+            address = event_venue.get("address")
+            city = event_venue.get("city")
+            country = normalize_country(event_venue.get("country"))
+        else:
+            # Read variables safely out of the class instance property
+            venue_name = self.venue_details.get("venue")
+            address = self.venue_details.get("address")
+            city = self.venue_details.get("city")
+            country = normalize_country(self.venue_details.get("country"))
 
         self.accept_cookies(sb)
         human_delay(2, 4)
