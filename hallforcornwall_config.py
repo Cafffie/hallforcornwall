@@ -23,16 +23,34 @@ DEFAULT_THEATRE_DETAILS = {
     "country": "UK",
 }
 
+VENUE_MAP = {
+                "truro school": {
+                    "venue": "Truro School Concert Hall",
+                    "address": "Trennick Lane, Truro, Cornwall TR1 1TH",
+                    "city": "Truro",
+                    "country": "United Kingdom",
+                },
+                "princess pavilion": {
+                    "venue": "Princess Pavilion",
+                    "address": "41 Melvill Road, Falmouth, Cornwall TR11 4AR",
+                    "city": "Falmouth",
+                    "country": "United Kingdom",
+                },
+            }
+
+
+
 SELECTORS = {
     "cookie_button": "//button[@id='CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll']",
     "theatre_address_xpath": "//h2[normalize-space()='Address']/following-sibling::p[1]",
-    #"address_header_xpath": "//p[contains(@class, 'h4') and contains(text(), 'Address')]",
-    #"address_paragraph_xpath": "/following-sibling::p",
-    #"shows_cards": "article.listing__item",
+    # "address_header_xpath": "//p[contains(@class, 'h4') and contains(text(), 'Address')]",
+    # "address_paragraph_xpath": "/following-sibling::p",
+    # "shows_cards": "article.listing__item",
     "shows_link": ".WhatsonItem .WhatsOnDateBnt a:first-of-type",
     "title": ".whatson-event-detailsHeading-title h1",
     "terminal_date": ".EventDetailHeading_row span.EventpostDate",
-    #"venue_url": "article.listing__item a",
+    # "venue_url": "article.listing__item a",
+    "event_description": "div.whatson-event-details-content",
     "first_book_btn": ".BannerBookBtn",
     "date_blocks": "tbody tr",
     "booking_url": ".BookingList_btn a",
