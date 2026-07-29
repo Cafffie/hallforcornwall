@@ -26,12 +26,13 @@ from utils.scraping_helpers import (
     standardize_category,
 )
 
-from .hallforcornwall_config import (  # COOKIE_BTN_XPATH,
+from .hallforcornwall_config import (
     ADDRESS_URL,
     DEFAULT_CURRENCY,
     DEFAULT_THEATRE_DETAILS,
     PAGES,
     SELECTORS,
+    VENUE_MAP,
 )
 
 logger = setup_logger(__name__, log_to_file=False)
@@ -136,7 +137,7 @@ class HallforcornwallExtractor(BaseExtractor):
                 # Hall for Cornwall, Back Quay, Truro TR1 2LL
                 data["address"] = address
                 parts = [part.strip() for part in address.split(",")]
-                data["venue"] = parts[0]
+                data["venue"] = "Cornwall Playhouse"
 
                 postcode = extract_postcode(address, region="UK")
                 if postcode:
@@ -150,6 +151,28 @@ class HallforcornwallExtractor(BaseExtractor):
                 f" Address extraction failed, fallback to default: {e}", "warning"
             )
             return DEFAULT_THEATRE_DETAILS
+
+    def _get_event_venue(self, sb) -> dict | None:
+        """Extract an event-specific venue from the current show page."""
+
+        try:
+            description = sb.get_text(SELECTORS["event_description"]).strip().lower()
+
+            for venue_name, venue_details in VENUE_MAP.items():
+                if venue_name.lower() in description:
+                    self.custom_logger.info(
+                        "Event-specific venue found: %s",
+                        venue_details["venue"],
+                    )
+                    return venue_details
+
+        except Exception as e:
+            self.custom_logger.warning(
+                "Event-specific venue extraction failed: %s",
+                e,
+            )
+
+        return None
 
     def _extract_performances(self, sb) -> list[dict]:
         """Parses performance instances directly from hallforcornwall's single or continuous date markers."""
@@ -607,11 +630,19 @@ class HallforcornwallExtractor(BaseExtractor):
                     f"Shared parse_booking_dates utility failed: {e}"
                 )
 
-        # FIX 4: Read variables safely out of the class instance property
-        venue_name = self.venue_details.get("venue")
-        address = self.venue_details.get("address")
-        city = self.venue_details.get("city")
-        country = normalize_country(self.venue_details.get("country"))
+        event_venue = self._get_event_venue(sb)
+        if event_venue:
+            venue_name = event_venue.get("venue")
+            address = event_venue.get("address")
+            city = event_venue.get("city")
+            country = normalize_country(event_venue.get("country"))
+
+        else:
+            # Read variables safely out of the class instance property
+            venue_name = self.venue_details.get("venue")
+            address = self.venue_details.get("address")
+            city = self.venue_details.get("city")
+            country = normalize_country(self.venue_details.get("country"))
 
         self.accept_cookies(sb)
         human_delay(2, 4)
@@ -672,13 +703,13 @@ class HallforcornwallExtractor(BaseExtractor):
             "country": country,
             "open_date": open_date,
             "close_date": close_date,
-            "booking_start_date": open_date,
+            "booking_start_date": None,
             "booking_end_date": close_date,
             "upcoming_performances": [
                 {"date": p["date"], "time": p["time"]} for p in performances
             ],
             "seat_pricing": seat_pricing,
-            "capacity": capacity,
+            "capacity": int(capacity) if capacity is not None else None,
             "currency": currency or DEFAULT_CURRENCY,
             "is_limited_run": None,
             "scrape_datetime": get_scrape_datetime(),  # datetime.now().strftime("%Y-%m-%d %H:%M"),
