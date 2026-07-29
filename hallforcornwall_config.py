@@ -8,6 +8,8 @@ DEFAULT_CURRENCY = "GBP"
 PAGES = [
     (f"{BASE_URL}whats-on/?category=plays-drama", "Play"),
     (f"{BASE_URL}whats-on/?category=musical-theatre", "Musical"),
+    (f"{BASE_URL}whats-on/?category=christmas-show", "Musical"),
+    (f"{BASE_URL}whats-on/?category=children-family", "Musical"),
 ]
 
 COOKIE_BTN_XPATH = (
@@ -17,22 +19,46 @@ COOKIE_BTN_XPATH = (
 ADDRESS_URL = "https://www.hallforcornwall.co.uk/visiting-us/"
 
 DEFAULT_THEATRE_DETAILS = {
-    "venue": "Hall for Cornwall",
+    "venue": "Cornwall Playhouse",
     "address": "Hall for Cornwall, Back Quay, Truro TR1 2LL",
-    "city": "Back Quay",
-    "country": "UK",
+    "city": "Truro",
+    "country": "United Kingdom",
+}
+
+VENUE_MAP = {
+    "princess pavilion": {
+        "venue": "Princess Pavilion",
+        "address": "41 Melvill Road, Falmouth, Cornwall TR11 4AR, United Kingdom",
+        "city": "Falmouth",
+        "country": "United Kingdom",
+    },
+    "truro school concert hall": {
+        "venue": "Truro School Concert Hall",
+        "address": "Trennick Lane, Truro, Cornwall TR1 1TH",
+        "city": "Truro",
+        "country": "United Kingdom",
+    },
+    "truro school": {
+        "venue": "Truro School",
+        "address": "Trennick Lane, Truro, Cornwall TR1 1TH",
+        "city": "Truro",
+        "country": "United Kingdom",
+    },
+    "creation works": {
+        "venue": "Creation Works",
+        "address": "13a Moorland Road, Par, Cornwall PL24 2PA",
+        "city": "Par",
+        "country": "United Kingdom",
+    },
 }
 
 SELECTORS = {
     "cookie_button": "//button[@id='CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll']",
     "theatre_address_xpath": "//h2[normalize-space()='Address']/following-sibling::p[1]",
-    # "address_header_xpath": "//p[contains(@class, 'h4') and contains(text(), 'Address')]",
-    # "address_paragraph_xpath": "/following-sibling::p",
-    # "shows_cards": "article.listing__item",
+    "event_description": "div.whatson-event-details-content",
     "shows_link": ".WhatsonItem .WhatsOnDateBnt a:first-of-type",
     "title": ".whatson-event-detailsHeading-title h1",
     "terminal_date": ".EventDetailHeading_row span.EventpostDate",
-    # "venue_url": "article.listing__item a",
     "first_book_btn": ".BannerBookBtn",
     "date_blocks": "tbody tr",
     "booking_url": ".BookingList_btn a",
