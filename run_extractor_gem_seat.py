@@ -14,7 +14,6 @@ from seleniumbase import SB
 from utils.base_extractor import BaseExtractor
 from utils.logger import setup_logger
 from utils.scraping_helpers import (
-    convert_to_24hr,
     extract_postcode,
     format_datetime_key,
     get_city_country_uk,
@@ -28,12 +27,12 @@ from utils.scraping_helpers import (
 )
 
 from .hallforcornwall_config import (
-    VENUE_MAP,
     ADDRESS_URL,
     DEFAULT_CURRENCY,
     DEFAULT_THEATRE_DETAILS,
     PAGES,
     SELECTORS,
+    VENUE_MAP,
 )
 
 logger = setup_logger(__name__, log_to_file=False)
@@ -129,14 +128,16 @@ class HallforcornwallExtractor(BaseExtractor):
 
         try:
             sb.wait_for_element_present(SELECTORS["theatre_address_xpath"], timeout=10)
-            address = sb.find_element(SELECTORS["theatre_address_xpath"]).text.replace("\n", "")
+            address = sb.find_element(SELECTORS["theatre_address_xpath"]).text.replace(
+                "\n", ""
+            )
             self.custom_logger.info(" Succesfully found the address")
-             
+
             if address:
                 # Hall for Cornwall, Back Quay, Truro TR1 2LL
                 data["address"] = address
                 parts = [part.strip() for part in address.split(",")]
-                data["venue"] = parts[0]
+                data["venue"] = "Cornwall Playhouse"
 
                 postcode = extract_postcode(address, region="UK")
                 if postcode:
@@ -151,14 +152,11 @@ class HallforcornwallExtractor(BaseExtractor):
             )
             return DEFAULT_THEATRE_DETAILS
 
-
     def _get_event_venue(self, sb) -> dict | None:
         """Extract an event-specific venue from the current show page."""
 
         try:
-            description = sb.get_text(
-                SELECTORS["event_description"]
-            ).strip().lower()
+            description = sb.get_text(SELECTORS["event_description"]).strip().lower()
 
             for venue_name, venue_details in VENUE_MAP.items():
                 if venue_name.lower() in description:
@@ -180,15 +178,14 @@ class HallforcornwallExtractor(BaseExtractor):
         """Parses performance instances directly from hallforcornwall's single or continuous date markers."""
 
         performances = []
-        seen_urls = set()
 
         # Try clicking a 'Book' tab or button if performances are hidden behind a modal (common for Spektrix)
         try:
-            sb.wait_for_element_present(SELECTORS["first_book_btn"], timeout=10) 
+            sb.wait_for_element_present(SELECTORS["first_book_btn"], timeout=10)
 
             first_book_btn = sb.find_element(SELECTORS["first_book_btn"])
             sb.execute_script("arguments[0].click();", first_book_btn)
-            #first_book_btn.click()
+            # first_book_btn.click()
             human_delay(1.0, 2.0)
             self.custom_logger.info(" First Book button clicked successfully.")
         except Exception as e:
@@ -204,18 +201,13 @@ class HallforcornwallExtractor(BaseExtractor):
                     booking_url = block.find_element(
                         By.CSS_SELECTOR, SELECTORS["booking_url"]
                     ).get_attribute("href")
-                    
-                    # Deduplicate based on unique performance booking URL
-                    if booking_url in seen_urls:
-                        self.custom_logger.info(f" performance booking_url duplicated")
-                        continue
 
                     raw_date_text = (
                         block.find_element(By.CSS_SELECTOR, SELECTORS["raw_date_text"])
                         .get_attribute("textContent")
                         .strip()
                     )
-                    
+
                     raw_time_text = (
                         block.find_element(By.CSS_SELECTOR, SELECTORS["raw_time_text"])
                         .get_attribute("textContent")
@@ -223,7 +215,9 @@ class HallforcornwallExtractor(BaseExtractor):
                     )
 
                     if not raw_date_text or not raw_time_text:
-                        self.custom_logger.info(f" performance raw_date_text, raw_time_text not found ")
+                        self.custom_logger.info(
+                            " performance raw_date_text, raw_time_text not found "
+                        )
                         continue
 
                     year = str(datetime.now().year)
@@ -232,16 +226,11 @@ class HallforcornwallExtractor(BaseExtractor):
 
                     date_ymd = self._parse_date(date_string)
                     time_hm = parser.parse(raw_time_text).strftime("%H:%M")
-                    #time_hm = convert_to_24hr(raw_time_text)
+                    # time_hm = convert_to_24hr(raw_time_text)
 
                     performances.append(
-                        {
-                            "date": date_ymd,
-                            "time": time_hm,
-                            "booking_url": booking_url
-                        }
+                        {"date": date_ymd, "time": time_hm, "booking_url": booking_url}
                     )
-                    seen_urls.add(booking_url)
 
                 except Exception as inner_e:
                     self.custom_logger.debug(
@@ -411,20 +400,26 @@ class HallforcornwallExtractor(BaseExtractor):
                     self.custom_logger.info("Scraping seats for: %s", area)
 
                     try:
-                        #sb.wait_for_element_present(SELECTORS["seats"], timeout=12)
-                        seats = sb.find_elements( SELECTORS["seats"])
+                        # sb.wait_for_element_present(SELECTORS["seats"], timeout=12)
+                        seats = sb.find_elements(SELECTORS["seats"])
                         self.custom_logger.info(f" Found {len(seats)} unique seats. ")
 
                         area_capacity = len(seats)
                         prev_seat_count = area_capacity  # update for next area
                         perf_capacity += area_capacity
 
-                        self.custom_logger.info("Area: %s | Total Seats: %s", area, area_capacity)
+                        self.custom_logger.info(
+                            "Area: %s | Total Seats: %s", area, area_capacity
+                        )
 
                         for seat in seats:
                             try:
-                                tooltip = (seat.get_attribute("tooltip") or seat.get_attribute("title") or "")
-                                
+                                tooltip = (
+                                    seat.get_attribute("tooltip")
+                                    or seat.get_attribute("title")
+                                    or ""
+                                )
+
                                 if currency is None and tooltip:
                                     currency = get_currency_from_price(tooltip)
 
@@ -437,10 +432,14 @@ class HallforcornwallExtractor(BaseExtractor):
                                 # Multi-tier Text Format Parsing ("Seat: A1 Price: £15.00")
                                 if "Seat:" in tooltip:
                                     seat_match = re.search(r"Seat:\s*(\S+)", tooltip)
-                                    price_match = re.search(r"Price:\s*[^\d]*([\d,.]+)", tooltip)
+                                    price_match = re.search(
+                                        r"Price:\s*[^\d]*([\d,.]+)", tooltip
+                                    )
                                     if seat_match and price_match:
                                         seat_id = seat_match.group(1)
-                                        ticket_price = float(price_match.group(1).replace(",", ""))
+                                        ticket_price = float(
+                                            price_match.group(1).replace(",", "")
+                                        )
 
                                 # Single-tier Clean/Legacy Text Format Parsing ("A1 - £15.00")
                                 elif " - " in tooltip:
@@ -449,21 +448,24 @@ class HallforcornwallExtractor(BaseExtractor):
                                         seat_id = parts[0].strip()
                                         price_digits = re.search(r"([\d,.]+)", parts[1])
                                         if price_digits:
-                                            ticket_price = float(price_digits.group(1).replace(",", ""))
+                                            ticket_price = float(
+                                                price_digits.group(1).replace(",", "")
+                                            )
 
                                 # Safeguard: skip processing if data didn't cleanly match either pattern
                                 if not seat_id or ticket_price is None:
                                     continue
 
-
                                 seat_id_ = f"{area} {seat_id}"
                                 all_seats[seat_id_] = {
-                                    "seat": seat_id_, 
-                                    "ticket_price": ticket_price
+                                    "seat": seat_id_,
+                                    "ticket_price": ticket_price,
                                 }
 
                             except Exception as seat_error:
-                                self.custom_logger.warning("Failed to parse seat: %s", seat_error)
+                                self.custom_logger.warning(
+                                    "Failed to parse seat: %s", seat_error
+                                )
                                 continue
 
                     except Exception as seat_extraction_error:
@@ -479,7 +481,7 @@ class HallforcornwallExtractor(BaseExtractor):
                         "Failed to process area %s: %s", area, area_error
                     )
                     continue
-        
+
         except Exception as e:
             self.custom_logger.error("Seat map scraping failed: %s", e)
         finally:
@@ -487,7 +489,7 @@ class HallforcornwallExtractor(BaseExtractor):
                 sb.switch_to_default_content()
             except Exception:
                 pass
-  
+
         seat_list = list(all_seats.values())
         self.custom_logger.info(
             f" Total capacity: {perf_capacity} seats ({len(seat_list)} priced)"
@@ -500,9 +502,10 @@ class HallforcornwallExtractor(BaseExtractor):
 
         seat_pricing = {}
 
-        capacity = 0
+        capacity = None
         currency = None
         encountered_no_seatmap = False
+        max_seatmap_retries = 3  # Number of retry attempts per performance
 
         for i, perf in enumerate(performances, start=1):
             key = format_datetime_key(perf["date"], perf["time"])
@@ -515,45 +518,71 @@ class HallforcornwallExtractor(BaseExtractor):
 
             # Confirm if sold out / Performance has no digital booking URL (likely telephone booking)."
             if not self.safe_get(sb, perf["booking_url"]):
-                self.custom_logger.info(
-                    f"Performance {key} is sold out."
-                )
+                self.custom_logger.info(f"Performance {key} is sold out.")
                 seat_pricing[key] = []
                 continue
 
-            try:
-                self.safe_get(sb, perf["booking_url"])
-                human_delay(4, 5.5)
-
+            seat_list = []
+            perf_currency = None
+            perf_capacity = None
+            # -------------------------------------------------------------
+            # RETRY LOOP FOR SEAT MAP EXTRACTION
+            # -------------------------------------------------------------
+            for attempt in range(1, max_seatmap_retries + 1):
                 try:
+                    self.custom_logger.info(
+                        f"Attempt {attempt}/{max_seatmap_retries} extracting seatmap for {key}"
+                    )
+                    # If this is a retry attempt, refresh/re-navigate to reset the iframe state
+                    if attempt > 1:
+                        self.safe_get(sb, perf["booking_url"])
+                        human_delay(3, 5)
+
+                    human_delay(2, 3)
+
+                    # Try to scrape the seatmap
                     seat_list, perf_currency, perf_capacity = self.extract_seats(sb)
+
+                    # If seats were found, store results and break the retry loop
                     if seat_list:
-                        seat_pricing[key] = seat_list
-                        currency = perf_currency
-                        capacity = perf_capacity
-                    self.custom_logger.info(
-                        f" Seats: {len(seat_list)} | Capacity: {capacity} | Currency: {currency}"
-                    )
+                        self.custom_logger.info(
+                            f" Successfully extracted {len(seat_list)} seats on attempt {attempt}"
+                        )
+                        break
+                    else:
+                        self.custom_logger.warning(
+                            f" Attempt {attempt} returned 0 seats for {key}."
+                        )
 
-                except Exception:
-                    seat_pricing[key] = []
-                    encountered_no_seatmap = True
-                    self.custom_logger.info(
-                        f" No seat map available for {perf['date']} {perf['time']}"
+                except Exception as e:
+                    self.custom_logger.warning(
+                        f" Attempt {attempt} threw an error extracting seatmap: {e}"
                     )
+                finally:
+                    # Always ensure we clear frame context before the next attempt or iteration
+                    try:
+                        sb.switch_to_default_content()
+                    except Exception:
+                        pass
 
-            except Exception as e:
+            # -------------------------------------------------------------
+            # RECORD RESULTS AFTER RETRIES EXHAUSTED OR SUCCEEDED
+            # -------------------------------------------------------------
+            if seat_list:
+                seat_pricing[key] = seat_list
+                currency = perf_currency
+                capacity = perf_capacity
+                self.custom_logger.info(
+                    f" Seats: {len(seat_list)} | Capacity: {capacity} | Currency: {currency}"
+                )
+            else:
                 seat_pricing[key] = []
                 encountered_no_seatmap = True
-                self.custom_logger.warning(f" Seat extraction error: {e}")
-                perf["capacity"] = None
-            finally:
-                try:
-                    sb.switch_to.default_content()
-                except Exception:
-                    pass
+                self.custom_logger.info(
+                    f" No seat map available for {perf['date']} {perf['time']} after {max_seatmap_retries} attempts."
+                )
 
-            human_delay(5, 7)
+            human_delay(3, 5)
 
         if encountered_no_seatmap and all(
             len(seat_list) == 0 for seat_list in seat_pricing.values()
@@ -565,7 +594,6 @@ class HallforcornwallExtractor(BaseExtractor):
 
         self.custom_logger.info(" Seat extraction flow processed")
         return seat_pricing, currency, capacity
-
 
     def _scrape_one_show(self, sb, show_url: str, category: str) -> dict | None:
         """Scrape a single show page end-to-end.
@@ -587,7 +615,9 @@ class HallforcornwallExtractor(BaseExtractor):
         open_date, close_date = None, None
         terminal_date = self._get_terminal_dates(sb)
         if terminal_date:
-            match = re.match(r"^(\d+)\s*-\s*(\d+)\s+([A-Za-z]+)\s+(\d{4})$", terminal_date.strip())
+            match = re.match(
+                r"^(\d+)\s*-\s*(\d+)\s+([A-Za-z]+)\s+(\d{4})$", terminal_date.strip()
+            )
             if match:
                 day_start, day_end, month, year = match.groups()
                 terminal_date = f"{day_start} {month} {year} - {day_end} {month} {year}"
@@ -596,16 +626,17 @@ class HallforcornwallExtractor(BaseExtractor):
                 open_date = booking_dates.get("start_date")
                 close_date = booking_dates.get("end_date")
             except Exception as e:
-                self.custom_logger.warning(f"Shared parse_booking_dates utility failed: {e}")
-
+                self.custom_logger.warning(
+                    f"Shared parse_booking_dates utility failed: {e}"
+                )
 
         event_venue = self._get_event_venue(sb)
-
         if event_venue:
             venue_name = event_venue.get("venue")
             address = event_venue.get("address")
             city = event_venue.get("city")
             country = normalize_country(event_venue.get("country"))
+
         else:
             # Read variables safely out of the class instance property
             venue_name = self.venue_details.get("venue")
@@ -624,8 +655,6 @@ class HallforcornwallExtractor(BaseExtractor):
         self.custom_logger.info("Close Date: %s", close_date)
         self.custom_logger.info("-" * 50)
 
-        # sb.execute_script("document.querySelector('a[href*=\"/book/\"]').click();")
-
         human_delay(10, 12.5)
         human_scroll(sb)
         time.sleep(3)
@@ -638,7 +667,7 @@ class HallforcornwallExtractor(BaseExtractor):
             return None
 
         sorted_dates = sorted([p["date"] for p in performances])
-        if not open_date:  # or open_date > close_date
+        if not open_date:
             open_date = sorted_dates[0]
 
         if not close_date:
@@ -650,9 +679,7 @@ class HallforcornwallExtractor(BaseExtractor):
             )
             open_date = sorted_dates[0]
 
-        seat_pricing, currency, capacity = self.extract_seat_metrics(
-            sb, performances
-        )
+        seat_pricing, currency, capacity = self.extract_seat_metrics(sb, performances)
 
         self.custom_logger.info(
             "Performances: %d | Seat keys: %d",
@@ -676,13 +703,13 @@ class HallforcornwallExtractor(BaseExtractor):
             "country": country,
             "open_date": open_date,
             "close_date": close_date,
-            "booking_start_date": open_date,
+            "booking_start_date": None,
             "booking_end_date": close_date,
             "upcoming_performances": [
                 {"date": p["date"], "time": p["time"]} for p in performances
             ],
             "seat_pricing": seat_pricing,
-            "capacity": capacity,
+            "capacity": int(capacity) if capacity is not None else None,
             "currency": currency or DEFAULT_CURRENCY,
             "is_limited_run": None,
             "scrape_datetime": get_scrape_datetime(),  # datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -738,6 +765,7 @@ class HallforcornwallExtractor(BaseExtractor):
     def extract(self) -> bytes:
         """Open SB session, scrape all shows, populate self.all_data, return JSON bytes."""
         self.all_data = []
+        seen_links = set()
 
         with SB(
             uc=True,
@@ -756,7 +784,9 @@ class HallforcornwallExtractor(BaseExtractor):
                 self.accept_cookies(sb)
                 self.venue_details = self._get_theatre_address(sb)
             else:
-                self.custom_logger.error("Visiting page failed to load. Using fallback defaults.")
+                self.custom_logger.error(
+                    "Visiting page failed to load. Using fallback defaults."
+                )
                 self.venue_details = DEFAULT_THEATRE_DETAILS
 
             for i, (url, category) in enumerate(PAGES):
@@ -769,7 +799,17 @@ class HallforcornwallExtractor(BaseExtractor):
                 self.accept_cookies(sb)
 
                 show_links = self.get_show_links(sb)
+                # show_links = ["https://www.hallforcornwall.co.uk/whats-on/agatha-christies-the-mousetrap/#"]
 
+                # Filter out links already processed in earlier genres ---
+                unique_links = []
+                for link in show_links:
+                    if link not in seen_links:
+                        seen_links.add(link)
+                        unique_links.append(link)
+
+                show_links = unique_links
+                
                 if self.local_test:
                     self.custom_logger.info(
                         "LOCAL TEST MODE: Limiting to %s shows", self.show_count
@@ -778,6 +818,20 @@ class HallforcornwallExtractor(BaseExtractor):
 
                 self._scrape_shows(sb, show_links, category)
 
+        # Deduplicate rows by (title, venue) before building the final output
+        deduped_data = []
+        seen_keys = set()
+
+        for row in self.all_data:
+            key = (row.get("title"), row.get("venue"))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped_data.append(row)
+            else:
+                self.custom_logger.warning(f"Dropped duplicate row for key: {key}")
+
+        self.all_data = deduped_data
+        
         return json.dumps(self.all_data, default=str).encode("utf-8")
 
     def _parse(self, _raw: bytes):
@@ -789,7 +843,9 @@ class HallforcornwallExtractor(BaseExtractor):
 
 def main():
     """Example usage of the hallforcornwall extractor."""
-    extractor = HallforcornwallExtractor(save_csv_locally=False, csv_incremental_mode=False)
+    extractor = HallforcornwallExtractor(
+        save_csv_locally=False, csv_incremental_mode=False
+    )
     result = extractor.run()
     logger.info(f"Extraction result: {result}")
     if result.get("status") != "success":
