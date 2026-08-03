@@ -22,6 +22,7 @@ def extract(self) -> bytes:
                 continue
 
             human_delay(4, 6)
+            sb.maximize_window()
             self.accept_cookies(sb)
 
             # Get links and filter out duplicates in one step
