@@ -257,6 +257,7 @@ class HallforcornwallExtractor(BaseExtractor):
             has_dropdown = False
             areas = []
 
+            # Try to find the dropdown on the main page
             try:
                 sb.wait_for_element_present(dropdown_selector, timeout=15)
                 has_dropdown = True
@@ -264,6 +265,7 @@ class HallforcornwallExtractor(BaseExtractor):
             except Exception:
                 pass
 
+            # If there is no dropdown, search inside iframes
             if not has_dropdown:
                 try:
                     iframes = sb.find_elements(SELECTORS["iframe"])
